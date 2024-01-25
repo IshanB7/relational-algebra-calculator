@@ -39,7 +39,7 @@ function Home() {
                     break;
                 }
 
-                lines[i] = lines[i].trim().replace(/["]+/g, "").split(",").map((item) => item.trim());
+                lines[i] = lines[i].trim().replace(/["]/g, "").split(",").map((item) => item.trim());
                 for (let j = 1; j < header.length; ++j) {
                     if (header[j] === "=") break;
                     parsedRelations[header[0]][header[j]].push(lines[i][j-1]);
@@ -54,120 +54,384 @@ function Home() {
     }
 
     function parseQuery(input) {
-        const line = input.replace(/[()]+/g, " ").trim().split(/\s+/);
+        input = input.replace(/\((\w+)\)/g, ' $1 ');
+        const line = input.replace(/(\(|\))/g, " $1 ").trim().split(/\s+/);
+        let queryArray = [];
         let queryObject = {};
-        queryObject["operation"] = [];
-        queryObject["fields"] = [];
         queryObject["from"] = [];
-        queryObject["where"] = [];
 
-        for (let i = line.length-1; i >= 0; --i) {
-            if (relations.hasOwnProperty(line[i])) {
-                queryObject.from.push(line[i]);
+        for (let each of line) {
+            if ((each === "(" || each === ")")) {
+                if (queryObject.hasOwnProperty("operation")) {
+                    queryArray.push(queryObject);
+                    queryObject = {};
+                    queryObject["from"] = [];
+                }
+                continue;
+            }
+
+            if (relations.hasOwnProperty(each)) {
+                queryObject.from.push(each);
             } else {
-                let match = false;
-                let fields = line[i].replace(/[,]+/g, " ").trim().split(/\s+/);
-                for (let each in relations) {
-                    for (let field of fields) {
-                        if (relations[each].hasOwnProperty(field)) {
-                            match = true;
-                            queryObject.fields.push(field);
-                            break;
+                let op = false;
+                switch (each) {
+                    case "select":
+                    case "project":
+                    case "join":
+                    case "ljoin":
+                    case "rjoin":
+                    case "ojoin":
+                    case "union":
+                    case "intersect":
+                    case "minus":
+                        if (queryObject.hasOwnProperty("operation")) {
+                            queryArray.push(queryObject);
+                            queryObject = {};
+                            queryObject["from"] = [];
+                        }
+                        queryObject["operation"] = each;
+                        op = true;
+                        break;
+                    default:
+                        break;
+                }
+
+                if (!op) {
+                    each = each.replace(/[,]/g, " ").trim();
+                    each = each.replace(/(!=|=|<|>|<=|>=)/g, " $1 ").trim();
+                    let split = each.split(/\s+/g);
+
+                    if (each.match(/[<>!=]/)) {
+                        if (!queryObject.hasOwnProperty("where")) {
+                            queryObject["where"] = [];
+                        }
+                        for (let i = 2; i < split.length; i+=3) {
+                            queryObject["where"].push({
+                                "field": split[i-2],
+                                "operator": split[i-1],
+                                "value": split[i]
+                            });
+                        }
+                    } else {
+                        if (!queryObject.hasOwnProperty("field")) {
+                            queryObject["field"] = [];
+                        }
+                        for (let x of split) {
+                            queryObject["field"].push(x);
                         }
                     }
                 }
+            }
 
-                if (!match) {
-                    switch (line[i]) {
-                        case "select":
-                        case "project":
-                        case "join":
-                        case "ojoin":
-                        case "ljoin":
-                        case "rjoin":
-                        case "union":
-                        case "intersect":
-                        case "minus":
-                            queryObject.operation.push(line[i]);
-                            match = true;
-                            break;
-                        default:
-                            break;
-                    }
-
-                    if (!match) {
-                        line[i] = line[i].replace(/["]+/g, "");
-                        line[i] = line[i].replace(/(!=|<|>|<=|>=|=)/g, " $1 ").trim().split(/\s+/);
-                        queryObject.where.push({
-                            "field": line[i][0],
-                            "operator": line[i][1],
-                            "value": line[i][2]
-                        });
-                    }
+            if (queryObject.operation === "select" || queryObject.operation === "project") {
+                if (queryObject.from.length === 1) {
+                    queryArray.push(queryObject);
+                    queryObject = {};
+                    queryObject["from"] = [];
                 }
+
+            } else if (queryObject.from.length === 2) {
+                queryArray.push(queryObject);
+                queryObject = {};
+                queryObject["from"] = [];
             }
         }
-        // console.log(relations);
-        // console.log(queryObject);
-        return queryObject;
-    }
-
-    function processQuery(queryObj) {
-        let temp = {};
-        const result = {};
-
-        for (let i = queryObj.operation.length-1; i >= 0; --i) {
-            if (queryObj.operation[i] === "select" || queryObj.operation[i] === "project") {
-                if (Object.keys(temp).length === 0) {
-                    temp = relations[queryObj.from[queryObj.from.length-1]];
-                    queryObj.from = queryObj.from.slice(0, queryObj.from.length-1);
-                }
-                
-                if (queryObj.operation[i] === "select") {
-                    let deleted = [];
-                    let where = queryObj.where[queryObj.where.length-1];
-                    queryObj.where = queryObj.where.slice(0, queryObj.where.length-1);
-                    for (let field in temp) {
-                        if (field === where.field) {
-                            for (let i = 0; i < temp[field].length; ++i) {
-                                switch (where.operator) {
-                                    case "!=":
-                                        if (temp[field][i] == where.value) {
-                                            deleted.push(i); 
-                                            break;
-                                        }
-                                    case "=":
-                                        if (temp[field][i] != where.value) {
-                                            deleted.push(i); 
-                                            break;
-                                        }
-                                    case "<":
-                                        if (temp[field][i] >= where.value) {
-                                            deleted.push(i); 
-                                            break;
-                                        }
-                                    case ">":
-                                        if (temp[field][i] <= where.value) {
-                                            deleted.push(i); 
-                                            break;
-                                        }
-                                    default:
-                                        break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    for (let each of deleted) {
-                        for (let field in temp) {
-                            temp[field] = temp[field].slice(0, each).concat(temp[field].slice(each+1));
-                        }
-                    }
-                    console.log(temp);
-                } else {
-
+        if (Object.keys(queryObject).length > 0) {
+            let empty = true;
+            for (let each of Object.keys(queryObject)) {
+                if (queryObject[each].length > 0) {
+                    empty = false;
+                    break;
                 }
             }
+
+            if (!empty) queryArray.push(queryObject);
+        }
+
+        return queryArray;
+    }
+
+    function processQuery(queryArr) {
+        let queryObj;
+        let temp = {};
+        let prev;
+
+        for (let i = queryArr.length-1; i >= 0; --i) {
+            queryObj = queryArr[i];
+
+            if (queryObj.operation === "select" || queryObj.operation === "project") {
+                if (queryObj.from.length === 1) {
+                    temp = JSON.parse(JSON.stringify(relations[queryObj.from[0]]));
+                }
+
+                if (queryObj.operation === "select") {
+                    let toDelete = {};
+                    if (queryObj.hasOwnProperty("where")) {
+                        for (let each in temp) {
+                            for (let where of queryObj.where) {
+                                if (each === where.field) {
+                                    for (let i = 0; i < temp[each].length; ++i) {
+                                        switch(where.operator) {
+                                            case "!=":
+                                                if (temp[each][i] == where.value) {
+                                                    toDelete[i] = true;
+                                                }   
+                                                break;
+                                            case "=":
+                                                if (temp[each][i] != where.value) {
+                                                    toDelete[i] = true;
+                                                }
+                                                break;
+                                            case ">":
+                                                if (temp[each][i] <= where.value) {
+                                                    toDelete[i] = true;
+                                                }
+                                                break;
+                                            case "<":
+                                                if (temp[each][i] >= where.value) {
+                                                    toDelete[i] = true;
+                                                }
+                                                break;
+                                            case ">=":
+                                                if (temp[each][i] < where.value) {
+                                                    toDelete[i] = true;
+                                                }
+                                                break;
+                                            case "<=":
+                                                if (temp[each][i] > where.value) {
+                                                    toDelete[i] = true;
+                                                }
+                                                break;
+                                            default:
+                                                break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let keys = Object.keys(toDelete);
+                        for (let each in temp) {
+                            for (let i=keys.length-1; i>=0; --i) {
+                                temp[each] = temp[each].slice(keys[i]-1, keys[i]).concat(temp[each].slice(keys[i]+1));
+                            }
+                        }
+                    }
+                } else {
+                    if (queryObj.hasOwnProperty("field")) {
+                        for (let each in temp) {
+                            let match = false
+                            for (let field of queryObj.field) {
+                                if (each === field) {
+                                    match = true;
+                                    break;
+                                }
+                            }
+                            if (!match) delete temp[each];
+                        }
+                    }
+                }
+            } else if (queryObj.operation.match(/join/)) {
+                let table1, table2;
+                if (queryObj.from.length < 2) {
+                    
+                } else {
+                    table1 = JSON.parse(JSON.stringify(relations[queryObj.from[[0]]]));
+                    table2 = JSON.parse(JSON.stringify(relations[queryObj.from[[1]]]));
+                }
+
+                if (queryObj.hasOwnProperty("where")) {
+                    let where = queryObj.where[0];
+                    let result = {}
+                    for (let field1 in table1) result[field1] = [];
+                    for (let field2 in table2) result[field2] = [];
+
+                    if (queryObj.operation === "join") {
+                        for (let i=0; i<table1[where.field].length; ++i) {
+                            for (let j=0; j<table2[where.value].length; ++j) {
+                                if (table1[where.field][i] === table2[where.value][j]) {
+                                    match = true;
+                                    for (let field1 in table1) {
+                                        result[field1].push(table1[field1][i]);
+                                    }
+
+                                    for (let field2 in table2) {
+                                        if (!table1.hasOwnProperty(field2)) {
+                                            result[field2].push(table2[field2][j]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (queryObj.operation === "ljoin") {
+                        for (let i=0; i<table1[where.field].length; ++i) {
+                            let match = false;
+                            for (let j=0; j<table2[where.value].length; ++j) {
+                                if (table1[where.field][i] === table2[where.value][j]) {
+                                    match = true;
+                                    for (let field1 in table1) {
+                                        result[field1].push(table1[field1][i]);
+                                    }
+
+                                    for (let field2 in table2) {
+                                        if (!table1.hasOwnProperty(field2)) {
+                                            result[field2].push(table2[field2][j]);
+                                        }
+                                    }
+                                }
+                            }
+                            if (!match) {
+                                for (let field in result) {
+                                    if (table1.hasOwnProperty(field)) {
+                                        result[field].push(table1[field][i]);
+                                    } else {
+                                        result[field].push(null);
+                                    }
+                                }
+                            }
+                        }
+                    } else if (queryObj.operation === "rjoin") {
+                        for (let j=0; j<table2[where.value].length; ++j) {
+                            let match = false;
+                            for (let i=0; i<table1[where.field].length; ++i) {
+                                if (table1[where.field][i] === table2[where.value][j]) {
+                                    match = true;
+                                    for (let field1 in table1) {
+                                        result[field1].push(table1[field1][i]);
+                                    }
+
+                                    for (let field2 in table2) {
+                                        if (!table1.hasOwnProperty(field2)) {
+                                            result[field2].push(table2[field2][j]);
+                                        }
+                                    }
+                                }
+                            }
+                            if (!match) {
+                                for (let field in result) {
+                                    if (table2.hasOwnProperty(field)) {
+                                        result[field].push(table2[field][j]);
+                                    } else {
+                                        result[field].push(null);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let result = {};
+                    let duplicate;
+                    for (let field1 in table1) result[field1] = [];
+                    for (let field2 in table2) {
+                        if (result.hasOwnProperty(field2)) duplicate = field2;
+                        result[field2] = [];
+                    }
+
+                    for (let i=0; i<table1[duplicate].length; ++i) {
+                        for (let j=0; j<table2[duplicate].length; ++j) {
+                            if (table1[duplicate][i] === table2[duplicate][j]) {
+                                for (let field1 in table1) {
+                                    result[field1].push(table1[field1][i]);
+                                }
+                                for (let field2 in table2) {
+                                    if (!table1.hasOwnProperty(field2)) {
+                                        result[field2].push(table2[field2][j]);
+                                    }
+                                }
+                            }
+                        }
+                    }                 
+                } 
+            } else {
+                let table1, table2;
+                if (queryObj.from.length < 2) {
+
+                } else {
+                    table1 = JSON.parse(JSON.stringify(relations[queryObj.from[[0]]]));
+                    table2 = JSON.parse(JSON.stringify(relations[queryObj.from[[1]]]));
+                }
+
+                if (Object.keys(table1).length === Object.keys(table2).length) {
+                    let result = {};
+                    for (let i=0; i<Object.keys(table1).length; ++i) result[i] = [];
+
+                    if (queryObj.operation === "union") {
+                        let keys = Object.keys(table1);
+                        for (let i=0; i<table1[keys[0]].length; ++i) {
+                            let match = true;
+                            for (let j=0; j<keys.length; ++j) {
+                                if (!result[j].includes(table1[keys[j]][i])) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (!match) {
+                                for (let j=0; j<keys.length; ++j) {
+                                    result[j].push(table1[keys[j]][i]);
+                                }
+                            }
+                        }
+
+                        keys = Object.keys(table2);
+                        for (let i=0; i<table2[keys[0]].length; ++i) {
+                            let match = true;
+                            for (let j=0; j<keys.length; ++j) {
+                                if (!result[j].includes(table2[keys[j]][i])) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (!match) {
+                                for (let j=0; j<keys.length; ++j) {
+                                    result[j].push(table2[keys[j]][i]);
+                                }
+                            }
+                        }
+                    } else if (queryObj.operation === "intersect") {
+                        let keys1 = Object.keys(table1);
+                        let keys2 = Object.keys(table2);
+
+                        for (let i = 0; i < table1[keys1[0]].length; ++i) {
+                            let tuple1 = keys1.map((key) => table1[key][i]);
+                            let isCommon = false;
+                            for (let j = 0; j < table2[keys2[0]].length; ++j) {
+                                let tuple2 = keys2.map((key) => table2[key][j]);
+                                if (JSON.stringify(tuple1) === JSON.stringify(tuple2)) {
+                                    isCommon = true;
+                                    break;
+                                }
+                            }
+
+                            if (isCommon) {
+                                for (let j = 0; j < keys1.length; ++j) {
+                                    result[j].push(tuple1[j]);
+                                }
+                            }
+                        }
+                    } else {
+                        let keys1 = Object.keys(table1);
+                        let keys2 = Object.keys(table2);
+
+                        for (let i = 0; i < table1[keys1[0]].length; ++i) {
+                            let tuple1 = keys1.map((key) => table1[key][i]);
+                            let isCommon = false;
+                            for (let j = 0; j < table2[keys2[0]].length; ++j) {
+                                let tuple2 = keys2.map((key) => table2[key][j]);
+                                if (JSON.stringify(tuple1) === JSON.stringify(tuple2)) {
+                                    isCommon = true;
+                                    break;
+                                }
+                            }
+                            if (!isCommon) {
+                                for (let j = 0; j < keys1.length; ++j) {
+                                    result[j].push(tuple1[j]);
+                                }
+                            }
+                        }
+                    }
+                    console.log(result);
+                }
+            }
+            prev = temp;
         }
     }
 
