@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import "./App.css"
 
 function Home() {
-    const [text, setText] = useState("");
+    const [text, setText] = useState("Employees (EID, Name, Age) = {\nE1, John, 32\nE2, Alice, 28\nE3, Bob, 29\n}\n\nManagers (MID, Name, Age) = {\nM1, Jacob, 32\nM2, Bob, 29\nM3, Gwen, 28\n}");
     useEffect(() => {
         setRelations(parseRelations(text));
     }, [text]);
 
 
     const [relations, setRelations] = useState({});
-    const [query, setQuery] = useState("");
+    const [query, setQuery] = useState("select Age>30(Employees)");
+    const [results, setResults] = useState(null);
 
     function handleChange(e) {
         setText(e.target.value);
@@ -147,58 +148,59 @@ function Home() {
 
             if (!empty) queryArray.push(queryObject);
         }
-
         return queryArray;
     }
 
     function processQuery(queryArr) {
         let queryObj;
-        let temp = {};
         let prev;
 
         for (let i = queryArr.length-1; i >= 0; --i) {
             queryObj = queryArr[i];
 
             if (queryObj.operation === "select" || queryObj.operation === "project") {
+                let result = {};
                 if (queryObj.from.length === 1) {
-                    temp = JSON.parse(JSON.stringify(relations[queryObj.from[0]]));
+                    result = JSON.parse(JSON.stringify(relations[queryObj.from[0]]));
+                } else {
+                    result = prev;
                 }
 
                 if (queryObj.operation === "select") {
                     let toDelete = {};
                     if (queryObj.hasOwnProperty("where")) {
-                        for (let each in temp) {
+                        for (let each in result) {
                             for (let where of queryObj.where) {
                                 if (each === where.field) {
-                                    for (let i = 0; i < temp[each].length; ++i) {
+                                    for (let i = 0; i < result[each].length; ++i) {
                                         switch(where.operator) {
                                             case "!=":
-                                                if (temp[each][i] == where.value) {
+                                                if (result[each][i] == where.value) {
                                                     toDelete[i] = true;
                                                 }   
                                                 break;
                                             case "=":
-                                                if (temp[each][i] != where.value) {
+                                                if (result[each][i] != where.value) {
                                                     toDelete[i] = true;
                                                 }
                                                 break;
                                             case ">":
-                                                if (temp[each][i] <= where.value) {
+                                                if (result[each][i] <= where.value) {
                                                     toDelete[i] = true;
                                                 }
                                                 break;
                                             case "<":
-                                                if (temp[each][i] >= where.value) {
+                                                if (result[each][i] >= where.value) {
                                                     toDelete[i] = true;
                                                 }
                                                 break;
                                             case ">=":
-                                                if (temp[each][i] < where.value) {
+                                                if (result[each][i] < where.value) {
                                                     toDelete[i] = true;
                                                 }
                                                 break;
                                             case "<=":
-                                                if (temp[each][i] > where.value) {
+                                                if (result[each][i] > where.value) {
                                                     toDelete[i] = true;
                                                 }
                                                 break;
@@ -210,15 +212,15 @@ function Home() {
                             }
                         }
                         let keys = Object.keys(toDelete);
-                        for (let each in temp) {
+                        for (let each in result) {
                             for (let i=keys.length-1; i>=0; --i) {
-                                temp[each] = temp[each].slice(keys[i]-1, keys[i]).concat(temp[each].slice(keys[i]+1));
+                                result[each].splice(keys[i], 1);
                             }
                         }
                     }
                 } else {
                     if (queryObj.hasOwnProperty("field")) {
-                        for (let each in temp) {
+                        for (let each in result) {
                             let match = false
                             for (let field of queryObj.field) {
                                 if (each === field) {
@@ -226,22 +228,24 @@ function Home() {
                                     break;
                                 }
                             }
-                            if (!match) delete temp[each];
+                            if (!match) delete result[each];
                         }
                     }
                 }
+                prev = result;
             } else if (queryObj.operation.match(/join/)) {
                 let table1, table2;
                 if (queryObj.from.length < 2) {
-                    
+                    table1 = JSON.parse(JSON.stringify(relations[queryObj.from[0]]));
+                    table2 = prev;
                 } else {
                     table1 = JSON.parse(JSON.stringify(relations[queryObj.from[[0]]]));
                     table2 = JSON.parse(JSON.stringify(relations[queryObj.from[[1]]]));
                 }
 
+                let result = {}
                 if (queryObj.hasOwnProperty("where")) {
                     let where = queryObj.where[0];
-                    let result = {}
                     for (let field1 in table1) result[field1] = [];
                     for (let field2 in table2) result[field2] = [];
 
@@ -249,7 +253,7 @@ function Home() {
                         for (let i=0; i<table1[where.field].length; ++i) {
                             for (let j=0; j<table2[where.value].length; ++j) {
                                 if (table1[where.field][i] === table2[where.value][j]) {
-                                    match = true;
+
                                     for (let field1 in table1) {
                                         result[field1].push(table1[field1][i]);
                                     }
@@ -318,7 +322,6 @@ function Home() {
                         }
                     }
                 } else {
-                    let result = {};
                     let duplicate;
                     for (let field1 in table1) result[field1] = [];
                     for (let field2 in table2) {
@@ -341,10 +344,12 @@ function Home() {
                         }
                     }                 
                 } 
+                prev = result;
             } else {
                 let table1, table2;
                 if (queryObj.from.length < 2) {
-
+                    table1 = JSON.parse(JSON.stringify(relations[queryObj.from[[0]]]));
+                    table2 = prev;
                 } else {
                     table1 = JSON.parse(JSON.stringify(relations[queryObj.from[[0]]]));
                     table2 = JSON.parse(JSON.stringify(relations[queryObj.from[[1]]]));
@@ -428,11 +433,12 @@ function Home() {
                             }
                         }
                     }
-                    console.log(result);
+                    prev = result;
                 }
             }
-            prev = temp;
         }
+        setResults(prev);
+        return prev;
     }
 
     return (
@@ -455,16 +461,28 @@ function Home() {
 
             <button onClick = {() => processQuery(parseQuery(query))}> Submit </button>
 
-            <div>
-                <table style={{ borderCollapse: 'collapse', width: '100%'}}>
+            {results && (
+                <div style={{ paddingTop: "20px"}}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                     <thead>
-
+                    <tr>
+                        {Object.keys(results).map((header) => (
+                        <th key={header}>{header}</th>
+                        ))}
+                    </tr>
                     </thead>
                     <tbody>
-
+                    {results[Object.keys(results)[0]].map((_, rowIndex) => (
+                        <tr key={rowIndex}>
+                        {Object.keys(results).map((header, colIndex) => (
+                            <td key={colIndex}>{results[header][rowIndex]}</td>
+                        ))}
+                        </tr>
+                    ))}
                     </tbody>
                 </table>
-            </div>
+                </div>
+            )}
         </>
     )
 }
